@@ -146,10 +146,6 @@ function normalizeAngle(deg) {
   return a;
 }
 
-// If every selected object shares (roughly) the same rotation, the group
-// has a well-defined orientation and the box should be drawn tilted to
-// match it. Otherwise there's no single "right" angle, so fall back to
-// an axis-aligned box.
 function computeGroupRotation(objs) {
   if (!objs.length) {
     return 0;
@@ -198,11 +194,6 @@ function getSelectionBounds() {
   const rotation =
     selectedObjects.length === 1 ? selectedObjects[0].rotation : groupRotation;
 
-  // Work in the box's own (unrotated) local frame: un-rotate every
-  // object's center by -rotation around the world origin, take the
-  // axis-aligned extents there, then rotate the resulting center back.
-  // This gives a tight box that hugs the content at that angle, instead
-  // of an axis-aligned box around already-rotated world coordinates.
   const toLocal = toRad(-rotation);
   const cosToLocal = Math.cos(toLocal);
   const sinToLocal = Math.sin(toLocal);
@@ -344,12 +335,71 @@ function createImage(file, x, y) {
 
     selectObject(object);
 
+    saveImages();
+
     URL.revokeObjectURL(url);
   };
 
   image.src = url;
 }
 
+function saveImages() {
+  const savedImages = [];
+
+  objects.forEach((object) => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    canvas.width = object.element.naturalWidth;
+    canvas.height = object.element.naturalHeight;
+
+    ctx.drawImage(object.element, 0, 0);
+
+    savedImages.push({
+      image: canvas.toDataURL("image/png"),
+      x: object.x,
+      y: object.y,
+      width: object.width,
+      height: object.height,
+      rotation: object.rotation,
+    });
+  });
+
+  localStorage.setItem("atlas-images", JSON.stringify(savedImages));
+}
+
+function loadimages() {
+  const savedImages = JSON.parse(localStorage.getItem("atlas-images")) || [];
+
+  savedImages.forEach((saved) => {
+    const image = new Image();
+
+    image.onload = () => {
+      const object = {
+        element: image,
+        x: saved.x,
+        y: saved.y,
+        width: saved.width,
+        height: saved.height,
+        rotation: saved.rotation,
+      };
+
+      image.className = "image-object";
+      image.draggable = false;
+
+      objects.push(object);
+      world.appendChild(image);
+
+      image.addEventListener("mousedown", (event) => {
+        startObjectDrag(event, object);
+      });
+
+      updateObject(object);
+      bringToFront(object);
+    };
+    image.src = saved.image;
+  });
+}
 window.addEventListener("paste", (event) => {
   const items = event.clipboardData.items;
 
@@ -681,19 +731,27 @@ window.addEventListener("mousemove", (event) => {
       updateObject(state.object);
     });
 
+    saveImages();
+
     updateSelectionBox();
   }
 
   if (mode === "resize") {
     resizeObject(event);
+    saveImages();
   }
 
   if (mode === "rotate") {
     rotateObject(event);
+    saveImages();
   }
 });
 
 window.addEventListener("mouseup", () => {
+  if (mode !== "none") {
+    saveImages();
+  }
+
   mode = "none";
 
   activeResizeHandle = null;
@@ -805,9 +863,11 @@ window.addEventListener("keydown", (event) => {
         objects.splice(index, 1);
       }
     });
+    saveImages();
 
     deselect();
   }
 });
 
+loadimages();
 updateWorldTransform();
