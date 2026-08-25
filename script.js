@@ -41,13 +41,10 @@ let groupRotationStart = 0;
 const resizeHandleDirs = {
   n: { x: 0, y: -1 },
   s: { x: 0, y: 1 },
-
   e: { x: 1, y: 0 },
   w: { x: -1, y: 0 },
-
   ne: { x: 1, y: -1 },
   nw: { x: -1, y: -1 },
-
   se: { x: 1, y: 1 },
   sw: { x: -1, y: 1 },
 };
@@ -55,13 +52,10 @@ const resizeHandleDirs = {
 const resizeCursors = {
   n: "ns-resize",
   s: "ns-resize",
-
   e: "ew-resize",
   w: "ew-resize",
-
   ne: "nesw-resize",
   sw: "nesw-resize",
-
   nw: "nwse-resize",
   se: "nwse-resize",
 };
@@ -106,7 +100,6 @@ function screenToWorld(clientX, clientY) {
 
   return {
     x: (clientX - rect.left - panX) / zoom,
-
     y: (clientY - rect.top - panY) / zoom,
   };
 }
@@ -114,7 +107,6 @@ function screenToWorld(clientX, clientY) {
 function worldToScreen(x, y) {
   return {
     x: panX + x * zoom,
-
     y: panY + y * zoom,
   };
 }
@@ -127,13 +119,9 @@ function updateWorldTransform() {
 
 function updateObject(object) {
   object.element.style.width = `${object.width}px`;
-
   object.element.style.height = `${object.height}px`;
-
   object.element.style.left = `${object.x - object.width / 2}px`;
-
   object.element.style.top = `${object.y - object.height / 2}px`;
-
   object.element.style.transform = `rotate(${object.rotation}deg)`;
 }
 
@@ -208,11 +196,8 @@ function getSelectionBounds() {
     const localY = object.x * sinToLocal + object.y * cosToLocal;
 
     minX = Math.min(minX, localX - object.width / 2);
-
     minY = Math.min(minY, localY - object.height / 2);
-
     maxX = Math.max(maxX, localX + object.width / 2);
-
     maxY = Math.max(maxY, localY + object.height / 2);
   });
 
@@ -255,19 +240,16 @@ function updateSelectionBox() {
   const topLeft = worldToScreen(bounds.left, bounds.top);
 
   selectionBox.style.left = `${topLeft.x}px`;
-
   selectionBox.style.top = `${topLeft.y}px`;
-
   selectionBox.style.width = `${bounds.width * zoom}px`;
-
   selectionBox.style.height = `${bounds.height * zoom}px`;
-
   selectionBox.style.transform = `rotate(${bounds.rotation}deg)`;
 }
 
 function snapToGrid(value) {
   return Math.round(value / GRID_SIZE) * GRID_SIZE;
 }
+
 function bringToFront(object) {
   const index = objects.indexOf(object);
 
@@ -276,7 +258,6 @@ function bringToFront(object) {
   }
 
   objects.splice(index, 1);
-
   objects.push(object);
 
   objects.forEach((item, i) => {
@@ -290,14 +271,12 @@ function createImage(file, x, y) {
   const url = URL.createObjectURL(file);
 
   image.className = "image-object";
-
   image.draggable = false;
 
   image.onload = () => {
     const maxSize = 500;
 
     let width = image.naturalWidth;
-
     let height = image.naturalHeight;
 
     if (Math.max(width, height) > maxSize) {
@@ -309,15 +288,10 @@ function createImage(file, x, y) {
 
     const object = {
       element: image,
-
       x: x,
-
       y: y,
-
       width: width,
-
       height: height,
-
       rotation: 0,
     };
 
@@ -330,9 +304,7 @@ function createImage(file, x, y) {
     });
 
     updateObject(object);
-
     bringToFront(object);
-
     selectObject(object);
 
     saveImages();
@@ -347,16 +319,16 @@ function saveImages() {
   const savedImages = [];
 
   objects.forEach((object) => {
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
+    const imageCanvas = document.createElement("canvas");
+    const ctx = imageCanvas.getContext("2d");
 
-    canvas.width = object.element.naturalWidth;
-    canvas.height = object.element.naturalHeight;
+    imageCanvas.width = object.element.naturalWidth;
+    imageCanvas.height = object.element.naturalHeight;
 
     ctx.drawImage(object.element, 0, 0);
 
     savedImages.push({
-      image: canvas.toDataURL("image/png"),
+      image: imageCanvas.toDataURL("image/jpeg", 0.8),
       x: object.x,
       y: object.y,
       width: object.width,
@@ -365,11 +337,21 @@ function saveImages() {
     });
   });
 
-  localStorage.setItem("atlas-images", JSON.stringify(savedImages));
+  try {
+    localStorage.setItem("atlas-images", JSON.stringify(savedImages));
+  } catch (error) {
+    console.log("Atlas could not save the images.");
+  }
 }
 
-function loadimages() {
-  const savedImages = JSON.parse(localStorage.getItem("atlas-images")) || [];
+function loadImages() {
+  let savedImages = [];
+
+  try {
+    savedImages = JSON.parse(localStorage.getItem("atlas-images")) || [];
+  } catch (error) {
+    savedImages = [];
+  }
 
   savedImages.forEach((saved) => {
     const image = new Image();
@@ -397,9 +379,11 @@ function loadimages() {
       updateObject(object);
       bringToFront(object);
     };
+
     image.src = saved.image;
   });
 }
+
 window.addEventListener("paste", (event) => {
   const items = event.clipboardData.items;
 
@@ -431,7 +415,6 @@ function startObjectDrag(event, object) {
   }
 
   event.preventDefault();
-
   event.stopPropagation();
 
   if (event.shiftKey) {
@@ -445,7 +428,6 @@ function startObjectDrag(event, object) {
   mode = "drag";
 
   startMouseX = event.clientX;
-
   startMouseY = event.clientY;
 
   dragStartState = selectedObjects.map((object) => ({
@@ -453,6 +435,7 @@ function startObjectDrag(event, object) {
     x: object.x,
     y: object.y,
   }));
+
   groupStartBounds = getSelectionBounds();
 }
 
@@ -462,7 +445,6 @@ function startResize(event, type) {
   }
 
   event.preventDefault();
-
   event.stopPropagation();
 
   mode = "resize";
@@ -496,7 +478,6 @@ function resizeObject(event) {
   }
 
   const dx = (event.clientX - startMouseX) / zoom;
-
   const dy = (event.clientY - startMouseY) / zoom;
 
   const rotation = toRad(groupStartBounds.rotation);
@@ -528,7 +509,6 @@ function resizeObject(event) {
   scale = Math.max(scale, 0.05);
 
   const newWidth = groupStartBounds.width * scale;
-
   const newHeight = groupStartBounds.height * scale;
 
   const anchorX =
@@ -594,6 +574,7 @@ function startRotate(event) {
     rotation: object.rotation,
   }));
 }
+
 function rotateObject(event) {
   if (!selectedObjects.length || !dragStartState) {
     return;
@@ -609,19 +590,19 @@ function rotateObject(event) {
   const mouseX = event.clientX - rect.left;
   const mouseY = event.clientY - rect.top;
 
-  let angle = Math.atan2(mouseY - center.y, mouseX - center.x);
+  const angle = Math.atan2(mouseY - center.y, mouseX - center.x);
 
-  let startAngle = groupStartAngle;
+  const rotation = ((angle - groupStartAngle) * 180) / Math.PI;
 
-  let rotation = ((angle - startAngle) * 180) / Math.PI;
+  let finalRotation = rotation;
 
   if (event.shiftKey) {
-    rotation = Math.round(rotation / 15) * 15;
+    finalRotation = Math.round(rotation / 15) * 15;
   }
 
-  groupRotation = normalizeAngle(groupRotationStart + rotation);
+  groupRotation = normalizeAngle(groupRotationStart + finalRotation);
 
-  const radians = toRad(rotation);
+  const radians = toRad(finalRotation);
 
   selectedObjects.forEach((object, index) => {
     const start = dragStartState[index];
@@ -636,9 +617,11 @@ function rotateObject(event) {
     object.y =
       groupStartBounds.centerY + x * Math.sin(radians) + y * Math.cos(radians);
 
-    object.rotation = start.rotation + rotation;
+    object.rotation = start.rotation + finalRotation;
+
     updateObject(object);
   });
+
   updateSelectionBox();
 }
 
@@ -649,11 +632,9 @@ canvas.addEventListener("mousedown", (event) => {
     mode = "pan";
 
     startPanX = panX;
-
     startPanY = panY;
 
     startMouseX = event.clientX;
-
     startMouseY = event.clientY;
 
     return;
@@ -670,7 +651,6 @@ canvas.addEventListener("mousedown", (event) => {
       const angle = toRad(-object.rotation);
 
       const dx = point.x - object.x;
-
       const dy = point.y - object.y;
 
       const localX = dx * Math.cos(angle) - dy * Math.sin(angle);
@@ -682,7 +662,6 @@ canvas.addEventListener("mousedown", (event) => {
         Math.abs(localY) <= object.height / 2
       ) {
         clickedObject = object;
-
         break;
       }
     }
@@ -731,19 +710,15 @@ window.addEventListener("mousemove", (event) => {
       updateObject(state.object);
     });
 
-    saveImages();
-
     updateSelectionBox();
   }
 
   if (mode === "resize") {
     resizeObject(event);
-    saveImages();
   }
 
   if (mode === "rotate") {
     rotateObject(event);
-    saveImages();
   }
 });
 
@@ -753,9 +728,7 @@ window.addEventListener("mouseup", () => {
   }
 
   mode = "none";
-
   activeResizeHandle = null;
-
   dragStartState = null;
 });
 
@@ -825,13 +798,7 @@ canvas.addEventListener("drop", (event) => {
   const point = screenToWorld(event.clientX, event.clientY);
 
   files.forEach((file, index) => {
-    createImage(
-      file,
-
-      point.x + index * 30,
-
-      point.y + index * 30,
-    );
+    createImage(file, point.x + index * 30, point.y + index * 30);
   });
 });
 
@@ -863,11 +830,11 @@ window.addEventListener("keydown", (event) => {
         objects.splice(index, 1);
       }
     });
-    saveImages();
 
+    saveImages();
     deselect();
   }
 });
 
-loadimages();
+loadImages();
 updateWorldTransform();
