@@ -20,7 +20,7 @@ let panY = 0;
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 3;
-const GRID_SIZE = 5;
+const GRID_SIZE = 10;
 
 let mode = "none";
 
@@ -350,6 +350,31 @@ function createImage(file, x, y) {
   image.src = url;
 }
 
+window.addEventListener("paste", (event) => {
+  const items = event.clipboardData.items;
+
+  for (const item of items) {
+    if (!item.type.startsWith("image/")) {
+      continue;
+    }
+
+    const file = item.getAsFile();
+
+    if (!file) {
+      continue;
+    }
+
+    const point = screenToWorld(
+      canvas.clientWidth / 2,
+      canvas.clientHeight / 2,
+    );
+
+    createImage(file, point.x, point.y);
+
+    break;
+  }
+});
+
 function startObjectDrag(event, object) {
   if (event.button !== 0) {
     return;
@@ -394,6 +419,9 @@ function startResize(event, type) {
 
   activeResizeHandle = type;
 
+  startMouseX = event.clientX;
+  startMouseY = event.clientY;
+
   groupStartBounds = getSelectionBounds();
 
   dragStartState = selectedObjects.map((object) => ({
@@ -407,13 +435,13 @@ function startResize(event, type) {
 }
 
 function resizeObject(event) {
-  const object = selectedObjects[0];
-
-  const start = dragStartState && dragStartState[0];
+  if (!selectedObjects.length || !dragStartState || !groupStartBounds) {
+    return;
+  }
 
   const dir = resizeHandleDirs[activeResizeHandle];
 
-  if (!object || !start || !dir) {
+  if (!dir) {
     return;
   }
 
@@ -421,64 +449,65 @@ function resizeObject(event) {
 
   const dy = (event.clientY - startMouseY) / zoom;
 
-  const rotation = toRad(start.rotation);
+  const rotation = toRad(groupStartBounds.rotation);
 
-  const localDx = dx * Math.cos(rotation) + dy * Math.sin(rotation);
+  const localX = dx * Math.cos(rotation) + dy * Math.sin(rotation);
 
-  const localDy = -dx * Math.sin(rotation) + dy * Math.cos(rotation);
+  const localY = -dx * Math.sin(rotation) + dy * Math.cos(rotation);
 
-  let scale;
+  let scale = 1;
 
   if (dir.x !== 0 && dir.y !== 0) {
-    const widthScale = (start.width + dir.x * localDx) / start.width;
+    const widthScale =
+      (groupStartBounds.width + dir.x * localX) / groupStartBounds.width;
 
-    const heightScale = (start.height + dir.y * localDy) / start.height;
+    const heightScale =
+      (groupStartBounds.height + dir.y * localY) / groupStartBounds.height;
 
     scale =
       Math.abs(widthScale - 1) > Math.abs(heightScale - 1)
         ? widthScale
         : heightScale;
   } else if (dir.x !== 0) {
-    scale = (start.width + dir.x * localDx) / start.width;
+    scale = (groupStartBounds.width + dir.x * localX) / groupStartBounds.width;
   } else {
-    scale = (start.height + dir.y * localDy) / start.height;
+    scale =
+      (groupStartBounds.height + dir.y * localY) / groupStartBounds.height;
   }
 
-  const minScale = 20 / Math.min(start.width, start.height);
+  scale = Math.max(scale, 0.05);
 
-  scale = Math.max(scale, minScale);
+  const newWidth = groupStartBounds.width * scale;
 
-  const newWidth = start.width * scale;
+  const newHeight = groupStartBounds.height * scale;
 
-  const newHeight = start.height * scale;
+  const anchorX =
+    groupStartBounds.centerX - (dir.x * groupStartBounds.width) / 2;
 
-  const anchorX = (-dir.x * start.width) / 2;
+  const anchorY =
+    groupStartBounds.centerY - (dir.y * groupStartBounds.height) / 2;
 
-  const anchorY = (-dir.y * start.height) / 2;
+  const newCenterX = anchorX + (dir.x * newWidth) / 2;
 
-  const anchorWorldX =
-    start.x + anchorX * Math.cos(rotation) - anchorY * Math.sin(rotation);
+  const newCenterY = anchorY + (dir.y * newHeight) / 2;
 
-  const anchorWorldY =
-    start.y + anchorX * Math.sin(rotation) + anchorY * Math.cos(rotation);
+  selectedObjects.forEach((object, index) => {
+    const start = dragStartState[index];
 
-  const newAnchorX = (-dir.x * newWidth) / 2;
+    const offsetX = start.x - groupStartBounds.centerX;
 
-  const newAnchorY = (-dir.y * newHeight) / 2;
+    const offsetY = start.y - groupStartBounds.centerY;
 
-  object.width = newWidth;
+    object.x = newCenterX + offsetX * scale;
 
-  object.height = newHeight;
+    object.y = newCenterY + offsetY * scale;
 
-  object.x =
-    anchorWorldX -
-    (newAnchorX * Math.cos(rotation) - newAnchorY * Math.sin(rotation));
+    object.width = start.width * scale;
 
-  object.y =
-    anchorWorldY -
-    (newAnchorX * Math.sin(rotation) + newAnchorY * Math.cos(rotation));
+    object.height = start.height * scale;
 
-  updateObject(object);
+    updateObject(object);
+  });
 
   updateSelectionBox();
 }
@@ -763,7 +792,10 @@ window.addEventListener("keydown", (event) => {
     deselect();
   }
 
-  if (event.key === "Delete" && selectedObjects.length) {
+  if (
+    (event.key === "Delete" || event.key === "Backspace") &&
+    selectedObjects.length
+  ) {
     selectedObjects.forEach((object) => {
       object.element.remove();
 
