@@ -10,6 +10,7 @@ this is a very simple web app
 - drag n drop or copy paste image on to the canvas
 - you can group select by holding shift
 - when youre rotating you can hold down shift so it rotates by 15 degrees
+- has a local storage so the images stays there
 
 ### Use of AI
 
