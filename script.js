@@ -11,7 +11,7 @@ if (!canvas || !world || !selectionBox || !dropOverlay) {
 
 const objects = [];
 
-let selectedObject = [];
+let selectedObjects = [];
 
 let zoom = 1;
 
@@ -20,6 +20,7 @@ let panY = 0;
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 3;
+const GRID_SIZE = 5;
 
 let mode = "none";
 
@@ -32,6 +33,10 @@ let startPanX = 0;
 let startPanY = 0;
 
 let dragStartState = null;
+let groupStartBounds = null;
+let groupStartAngle = 0;
+let groupRotation = 0;
+let groupRotationStart = 0;
 
 const resizeHandleDirs = {
   n: { x: 0, y: -1 },
@@ -132,43 +137,146 @@ function updateObject(object) {
   object.element.style.transform = `rotate(${object.rotation}deg)`;
 }
 
-function selectObject(object) {
-  selectedObject = object;
+function normalizeAngle(deg) {
+  let a = deg % 360;
 
-  selectionBox.style.display = "block";
+  if (a > 180) a -= 360;
+  if (a < -180) a += 360;
+
+  return a;
+}
+
+// If every selected object shares (roughly) the same rotation, the group
+// has a well-defined orientation and the box should be drawn tilted to
+// match it. Otherwise there's no single "right" angle, so fall back to
+// an axis-aligned box.
+function computeGroupRotation(objs) {
+  if (!objs.length) {
+    return 0;
+  }
+
+  const first = objs[0].rotation;
+
+  const allSame = objs.every(
+    (o) => Math.abs(normalizeAngle(o.rotation - first)) < 0.01,
+  );
+
+  return allSame ? first : 0;
+}
+
+function selectObject(object, additive = false) {
+  if (!additive) {
+    selectedObjects = [object];
+  } else {
+    const index = selectedObjects.indexOf(object);
+
+    if (index === -1) {
+      selectedObjects.push(object);
+    } else {
+      selectedObjects.splice(index, 1);
+    }
+  }
+
+  groupRotation = computeGroupRotation(selectedObjects);
 
   updateSelectionBox();
 }
 
 function deselect() {
-  selectedObject = null;
+  selectedObjects = [];
+
+  groupRotation = 0;
 
   selectionBox.style.display = "none";
 }
 
+function getSelectionBounds() {
+  if (!selectedObjects.length) {
+    return null;
+  }
+
+  const rotation =
+    selectedObjects.length === 1 ? selectedObjects[0].rotation : groupRotation;
+
+  // Work in the box's own (unrotated) local frame: un-rotate every
+  // object's center by -rotation around the world origin, take the
+  // axis-aligned extents there, then rotate the resulting center back.
+  // This gives a tight box that hugs the content at that angle, instead
+  // of an axis-aligned box around already-rotated world coordinates.
+  const toLocal = toRad(-rotation);
+  const cosToLocal = Math.cos(toLocal);
+  const sinToLocal = Math.sin(toLocal);
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  selectedObjects.forEach((object) => {
+    const localX = object.x * cosToLocal - object.y * sinToLocal;
+    const localY = object.x * sinToLocal + object.y * cosToLocal;
+
+    minX = Math.min(minX, localX - object.width / 2);
+
+    minY = Math.min(minY, localY - object.height / 2);
+
+    maxX = Math.max(maxX, localX + object.width / 2);
+
+    maxY = Math.max(maxY, localY + object.height / 2);
+  });
+
+  const localCenterX = (minX + maxX) / 2;
+  const localCenterY = (minY + maxY) / 2;
+
+  const toWorld = toRad(rotation);
+  const cosToWorld = Math.cos(toWorld);
+  const sinToWorld = Math.sin(toWorld);
+
+  const centerX = localCenterX * cosToWorld - localCenterY * sinToWorld;
+  const centerY = localCenterX * sinToWorld + localCenterY * cosToWorld;
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+
+  return {
+    left: centerX - width / 2,
+    top: centerY - height / 2,
+    right: centerX + width / 2,
+    bottom: centerY + height / 2,
+    width,
+    height,
+    centerX,
+    centerY,
+    rotation,
+  };
+}
+
 function updateSelectionBox() {
-  if (!selectedObject) {
+  const bounds = getSelectionBounds();
+
+  if (!bounds) {
+    selectionBox.style.display = "none";
     return;
   }
 
-  const object = selectedObject;
+  selectionBox.style.display = "block";
 
-  const topLeft = worldToScreen(
-    object.x - object.width / 2,
-    object.y - object.height / 2,
-  );
+  const topLeft = worldToScreen(bounds.left, bounds.top);
 
   selectionBox.style.left = `${topLeft.x}px`;
 
   selectionBox.style.top = `${topLeft.y}px`;
 
-  selectionBox.style.width = `${object.width * zoom}px`;
+  selectionBox.style.width = `${bounds.width * zoom}px`;
 
-  selectionBox.style.height = `${object.height * zoom}px`;
+  selectionBox.style.height = `${bounds.height * zoom}px`;
 
-  selectionBox.style.transform = `rotate(${object.rotation}deg)`;
+  selectionBox.style.transform = `rotate(${bounds.rotation}deg)`;
 }
 
+function snapToGrid(value) {
+  return Math.round(value / GRID_SIZE) * GRID_SIZE;
+}
 function bringToFront(object) {
   const index = objects.indexOf(object);
 
@@ -220,8 +328,6 @@ function createImage(file, x, y) {
       height: height,
 
       rotation: 0,
-
-      aspectRatio: width / height,
     };
 
     objects.push(object);
@@ -253,7 +359,11 @@ function startObjectDrag(event, object) {
 
   event.stopPropagation();
 
-  selectObject(object);
+  if (event.shiftKey) {
+    selectObject(object, true);
+  } else if (!selectedObjects.includes(object)) {
+    selectObject(object);
+  }
 
   bringToFront(object);
 
@@ -263,21 +373,16 @@ function startObjectDrag(event, object) {
 
   startMouseY = event.clientY;
 
-  dragStartState = {
+  dragStartState = selectedObjects.map((object) => ({
+    object: object,
     x: object.x,
-
     y: object.y,
-
-    width: object.width,
-
-    height: object.height,
-
-    rotation: object.rotation,
-  };
+  }));
+  groupStartBounds = getSelectionBounds();
 }
 
 function startResize(event, type) {
-  if (!selectedObject || event.button !== 0) {
+  if (!selectedObjects.length || event.button !== 0) {
     return;
   }
 
@@ -289,27 +394,22 @@ function startResize(event, type) {
 
   activeResizeHandle = type;
 
-  startMouseX = event.clientX;
+  groupStartBounds = getSelectionBounds();
 
-  startMouseY = event.clientY;
-
-  dragStartState = {
-    x: selectedObject.x,
-
-    y: selectedObject.y,
-
-    width: selectedObject.width,
-
-    height: selectedObject.height,
-
-    rotation: selectedObject.rotation,
-  };
+  dragStartState = selectedObjects.map((object) => ({
+    object: object,
+    x: object.x,
+    y: object.y,
+    width: object.width,
+    height: object.height,
+    rotation: object.rotation,
+  }));
 }
 
 function resizeObject(event) {
-  const object = selectedObject;
+  const object = selectedObjects[0];
 
-  const start = dragStartState;
+  const start = dragStartState && dragStartState[0];
 
   const dir = resizeHandleDirs[activeResizeHandle];
 
@@ -384,61 +484,82 @@ function resizeObject(event) {
 }
 
 function startRotate(event) {
-  if (!selectedObject || event.button !== 0) {
+  if (!selectedObjects.length || event.button !== 0) {
     return;
   }
 
   event.preventDefault();
-
   event.stopPropagation();
 
   mode = "rotate";
 
-  startMouseX = event.clientX;
+  const bounds = getSelectionBounds();
 
-  startMouseY = event.clientY;
+  groupStartBounds = bounds;
 
-  dragStartState = {
-    x: selectedObject.x,
+  groupRotationStart = bounds.rotation;
 
-    y: selectedObject.y,
+  const rect = canvas.getBoundingClientRect();
 
-    width: selectedObject.width,
+  const center = worldToScreen(bounds.centerX, bounds.centerY);
 
-    height: selectedObject.height,
+  const mouseX = event.clientX - rect.left;
+  const mouseY = event.clientY - rect.top;
 
-    rotation: selectedObject.rotation,
-  };
+  groupStartAngle = Math.atan2(mouseY - center.y, mouseX - center.x);
+
+  dragStartState = selectedObjects.map((object) => ({
+    object: object,
+    x: object.x,
+    y: object.y,
+    rotation: object.rotation,
+  }));
 }
-
 function rotateObject(event) {
-  const object = selectedObject;
-
-  if (!object) {
+  if (!selectedObjects.length || !dragStartState) {
     return;
   }
 
   const rect = canvas.getBoundingClientRect();
 
-  const center = worldToScreen(object.x, object.y);
+  const center = worldToScreen(
+    groupStartBounds.centerX,
+    groupStartBounds.centerY,
+  );
 
   const mouseX = event.clientX - rect.left;
-
   const mouseY = event.clientY - rect.top;
 
-  let angle =
-    (Math.atan2(mouseY - center.y, mouseX - center.x) * 180) / Math.PI;
+  let angle = Math.atan2(mouseY - center.y, mouseX - center.x);
 
-  angle += 90;
+  let startAngle = groupStartAngle;
+
+  let rotation = ((angle - startAngle) * 180) / Math.PI;
 
   if (event.shiftKey) {
-    angle = Math.round(angle / 15) * 15;
+    rotation = Math.round(rotation / 15) * 15;
   }
 
-  object.rotation = angle;
+  groupRotation = normalizeAngle(groupRotationStart + rotation);
 
-  updateObject(object);
+  const radians = toRad(rotation);
 
+  selectedObjects.forEach((object, index) => {
+    const start = dragStartState[index];
+
+    const x = start.x - groupStartBounds.centerX;
+
+    const y = start.y - groupStartBounds.centerY;
+
+    object.x =
+      groupStartBounds.centerX + x * Math.cos(radians) - y * Math.sin(radians);
+
+    object.y =
+      groupStartBounds.centerY + x * Math.sin(radians) + y * Math.cos(radians);
+
+    object.rotation = start.rotation + rotation;
+    updateObject(object);
+  });
   updateSelectionBox();
 }
 
@@ -504,20 +625,32 @@ window.addEventListener("mousemove", (event) => {
     return;
   }
 
-  if (!selectedObject || !dragStartState) {
+  if (!selectedObjects.length || !dragStartState) {
     return;
   }
 
   if (mode === "drag") {
-    const moveX = (event.clientX - startMouseX) / zoom;
+    let moveX = (event.clientX - startMouseX) / zoom;
 
-    const moveY = (event.clientY - startMouseY) / zoom;
+    let moveY = (event.clientY - startMouseY) / zoom;
 
-    selectedObject.x = dragStartState.x + moveX;
+    if (!event.altKey && groupStartBounds) {
+      const targetX = groupStartBounds.centerX + moveX;
 
-    selectedObject.y = dragStartState.y + moveY;
+      const targetY = groupStartBounds.centerY + moveY;
 
-    updateObject(selectedObject);
+      moveX = snapToGrid(targetX) - groupStartBounds.centerX;
+
+      moveY = snapToGrid(targetY) - groupStartBounds.centerY;
+    }
+
+    dragStartState.forEach((state) => {
+      state.object.x = state.x + moveX;
+
+      state.object.y = state.y + moveY;
+
+      updateObject(state.object);
+    });
 
     updateSelectionBox();
   }
@@ -630,14 +763,16 @@ window.addEventListener("keydown", (event) => {
     deselect();
   }
 
-  if (event.key === "Delete" && selectedObject) {
-    const index = objects.indexOf(selectedObject);
+  if (event.key === "Delete" && selectedObjects.length) {
+    selectedObjects.forEach((object) => {
+      object.element.remove();
 
-    if (index !== -1) {
-      selectedObject.element.remove();
+      const index = objects.indexOf(object);
 
-      objects.splice(index, 1);
-    }
+      if (index !== -1) {
+        objects.splice(index, 1);
+      }
+    });
 
     deselect();
   }
